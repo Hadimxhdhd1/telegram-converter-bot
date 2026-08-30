@@ -1,0 +1,7 @@
+python-telegram-bot
+pdf2image
+Pillow
+img2pdf
+python-docx
+openpyxl
+
