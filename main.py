@@ -2,19 +2,35 @@ import os
 import logging
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
-from pdf2image import convert_from_path
+import fitz  # مكتبة PyMuPDF المتوافقة مع السحابة
 import img2pdf
 from docx import Document
-from openpyxl import Workbook, load_workbook
+from flask import Flask
+from threading import Thread
 
 # إعداد السجلات
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 
+# --- إعداد خادم ويب وهمي لإبقاء البوت يعمل 24/7 على منصة Render ---
+app = Flask(__name__)
+@app.route('/')
+def home():
+    return "Bot is running perfectly 24/7!"
+
+def run_web():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
+
+def keep_alive():
+    t = Thread(target=run_web)
+    t.start()
+# ---------------------------------------------------------------
+
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.document:
-        await update.message.reply_text("الرجاء إرسال ملف صالح (PDF, Word, Excel, JPG).")
+        await update.message.reply_text("الرجاء إرسال ملف صالح.")
         return
 
     doc = update.message.document
@@ -27,15 +43,18 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     new_file = await context.bot.get_file(doc.file_id)
     await new_file.download_to_drive(file_path)
     
-    await update.message.reply_text("⏳ جاري معالجة وتحويل الملف...")
+    await update.message.reply_text("⏳ جاري معالجة وتحويل الملف، انتظر لحظات...")
 
     try:
         if file_extension == 'pdf':
-            images = convert_from_path(file_path)
-            for i, image in enumerate(images):
-                img_path = f"downloads/page_{i+1}.jpg"
-                image.save(img_path, 'JPEG')
+            # تحويل PDF إلى صور باستخدام PyMuPDF
+            pdf_doc = fitz.open(file_path)
+            for page in pdf_doc:
+                pix = page.get_pixmap(dpi=150)
+                img_path = f"downloads/page_{page.number + 1}.jpg"
+                pix.save(img_path)
                 await update.message.reply_document(document=open(img_path, 'rb'))
+            pdf_doc.close()
                 
         elif file_extension in ['jpg', 'jpeg', 'png']:
             pdf_path = "downloads/converted_image.pdf"
@@ -52,12 +71,14 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_document(document=open(txt_path, 'rb'))
             
         else:
-            await update.message.reply_text("عذراً، هذه الصيغة غير مدعومة حالياً في التحويل المباشر.")
+            await update.message.reply_text("عذراً، هذه الصيغة غير مدعومة حالياً.")
             
     except Exception as e:
         await update.message.reply_text(f"حدث خطأ أثناء معالجة الملف: {str(e)}")
 
 if __name__ == '__main__':
+    keep_alive() # تشغيل الخادم الوهمي لمنع التوقف
+    
     application = ApplicationBuilder().token(TOKEN).build()
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     
